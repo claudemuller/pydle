@@ -6,9 +6,9 @@
 # Licensed under the MIT License (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #       http://opensource.org/licenses/MIT
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,31 +19,66 @@
     Python class to check for USB connected Kindle and interface with its storage
 
     @TODO   Linux and OS X compatibility
-            processing and storing of note, bookmarks, highlights
+            Processing and storing of note, bookmarks, highlights
+            Integration into Evernote, Google Drive and Dropbox to store notes
 """
 
-import win32com.client
+try:
+    import win32com.client
+    platform = "win"
+except (ImportError):
+    from gi.repository import GLib as glib
+    from pyudev import Context, Monitor
+    platform = "nix"
 import re
 import os
+try:
+    from pyudev.glib import MonitorObserver
+except:
+    from pyudev.glib import GUDevMonitorObserver as MonitorObserver
 
 class Pydle:
-    def __init__(self):
+    def __init__(self, platform):
+        self.platform = platform
+
         if self._detectDevice():
             self._getBooks()
 
     def _detectDevice(self):
-        """ Hook into the Win32 API with win32com to retrieve Kindle device info """
-        self.wmi = win32com.client.GetObject("winmgmts:")
-        for usb in self.wmi.InstancesOf("Win32_USBControllerDevice"):
-            if re.search("kindle", usb.Dependent, re.IGNORECASE):
-                for logical_disk in self.wmi.InstancesOf("Win32_LogicalDisk"):
-                    if re.search("kindle", logical_disk.VolumeName, re.IGNORECASE):
-                        self.drive_letter = logical_disk.DeviceID
-                        self.description = logical_disk.Description
-                        self.name = logical_disk.VolumeName
+        """ Detect and retrieve Kindle device info """
 
-                        return True
+        # Use win32com for Windows environment
+        if self.platform == "win":
+            self.wmi = win32com.client.GetObject("winmgmts:")
+            for usb in self.wmi.InstancesOf("Win32_USBControllerDevice"):
+                if re.search("kindle", usb.Dependent, re.IGNORECASE):
+                    for logical_disk in self.wmi.InstancesOf("Win32_LogicalDisk"):
+                        if re.search("kindle", logical_disk.VolumeName, re.IGNORECASE):
+                            self.drive_letter = logical_disk.DeviceID
+                            self.description = logical_disk.Description
+                            self.name = logical_disk.VolumeName
+
+                            return True
+        # Else assume a *nix environment
+        else:
+            context = Context()
+            monitor = Monitor.from_netlink(context)
+
+            monitor.filter_by(subsystem="usb")
+            observer = MonitorObserver(monitor)
+
+            observer.connect("device-event", self._deviceEvent)
+            monitor.start()
+
+            glib.MainLoop().run()
+
         return False
+
+    def _deviceEvent(observer, device, action = ""):
+        if hasattr(device, "action"):
+            action = device.action
+
+        print("event {0} on device {1}".format(action, device))
 
     def _getBooks(self):
         """ Traverse the documents directory where the books are stored """
@@ -64,5 +99,6 @@ class Pydle:
             print("No device detected.")
 
 if __name__ == "__main__":
-    pydle = Pydle()
+    pydle = Pydle(platform)
     # pydle.printInfo()
+
