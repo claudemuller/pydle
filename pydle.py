@@ -21,6 +21,7 @@
     @TODO   OS X compatibility
             Processing and storing of note, bookmarks, highlights
             Integration into Evernote, Google Drive and Dropbox to store notes
+            Auto recognition of USB device on connect
 """
 
 import sys
@@ -37,21 +38,19 @@ try:
 except:
     from pyudev.glib import GUDevMonitorObserver as MonitorObserver
 
-class Pydle:
-    def __init__(self, platform):
-        self.platform = platform
-        self.booksDir = "/documents"
-        self.dictionaries = self.booksDir + "/dictionaries"
-        self.noteBook = self.booksDir + "/My Clippings.txt"
+class pydle:
+    def __init__(self):
+        self.booksDir = "documents"
+        self.dictionaries = os.path.join(self.booksDir, "dictionaries")
+        self.noteBook = os.path.join(self.booksDir, "My Clippings.txt")
 
-        if self._detectDevice():
-            self._getBooks()
+        self._detectDevice()
 
     def _detectDevice(self):
         """ Detect and retrieve Kindle device info """
 
         # Use win32com for Windows environment
-        if self.platform == "win":
+        if sys.platform == "win":
             self.wmi = win32com.client.GetObject("winmgmts:")
             for usb in self.wmi.InstancesOf("Win32_USBControllerDevice"):
                 if re.search("kindle", usb.Dependent, re.IGNORECASE):
@@ -75,13 +74,13 @@ class Pydle:
                 if device_props.Get('org.freedesktop.UDisks.Device', "DriveVendor") == "Kindle":
                     mountPaths = device_props.Get('org.freedesktop.UDisks.Device', "DeviceMountPaths")
                     if len(mountPaths) > 0:
-                        self.vendor = device_props.Get('org.freedesktop.UDisks.Device', "DriveVendor")
+                        self.name = device_props.Get('org.freedesktop.UDisks.Device', "DriveVendor")
                         for point in mountPaths:
                             self.mountPoint = point
                         self.serial = device_props.Get('org.freedesktop.UDisks.Device', "DriveSerial")
                         self.size = device_props.Get('org.freedesktop.UDisks.Device', "PartitionSize")
 
-            print(self.mountPoint)
+            return True
 
         return False
 
@@ -102,17 +101,30 @@ class Pydle:
 
         print("event {0} on device {1}".format(action, device))
 
-    def _getBooks(self):
+    def getBooks(self):
         """ Traverse the documents directory where the books are stored """
-        for root, dirs, files in os.walk(self.driveLetter + "\\documents"):
+        books = []
+
+        for root, dirs, files in os.walk(os.path.join(self.mountPoint, "documents")):
             for name in files:
                 if re.search("\.mobi|\.pdf", name, re.IGNORECASE):
-                    print(root + "\\" + name)
+                    books.append({
+                        "name": name,
+                        "location": os.path.join(root, name)
+                        })
+
+        return books
+
+    def getNotes(self):
+        with open(os.path.join(self.mountPoint,self.noteBook)) as fd:
+            notes = fd.readlines()
+
+        return notes
 
     def printInfo(self):
         """ Print out some info about the device """
         try:
-            with open(self.mountPoint + "\\system\\version.txt") as fd:
+            with open(os.path.join(self.mountPoint, "system", "version.txt")) as fd:
                 print("Version: " + fd.readline().strip())
             print("Device Name: " + self.name)
             print("Description: " + self.description)
@@ -121,6 +133,8 @@ class Pydle:
             print("No device detected.")
 
 if __name__ == "__main__":
-    pydle = Pydle(sys.platform)
+    pydle = pydle()
+    # print(pydle.getBooks())
+    print(pydle.getNotes())
     # pydle.printInfo()
 
