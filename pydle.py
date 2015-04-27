@@ -18,20 +18,20 @@
 """
     Python class to check for USB connected Kindle and interface with its storage
 
-    @TODO   Linux and OS X compatibility
+    @TODO   OS X compatibility
             Processing and storing of note, bookmarks, highlights
             Integration into Evernote, Google Drive and Dropbox to store notes
 """
 
-try:
-    import win32com.client
-    platform = "win"
-except (ImportError):
-    from gi.repository import GLib as glib
-    from pyudev import Context, Monitor
-    platform = "nix"
+import sys
 import re
 import os
+if sys.platform == "win":
+    import win32com.client
+else:
+    import dbus
+    from gi.repository import GLib as glib
+    from pyudev import Context, Monitor
 try:
     from pyudev.glib import MonitorObserver
 except:
@@ -40,6 +40,9 @@ except:
 class Pydle:
     def __init__(self, platform):
         self.platform = platform
+        self.booksDir = "/documents"
+        self.dictionaries = self.booksDir + "/dictionaries"
+        self.noteBook = self.booksDir + "/My Clippings.txt"
 
         if self._detectDevice():
             self._getBooks()
@@ -54,25 +57,44 @@ class Pydle:
                 if re.search("kindle", usb.Dependent, re.IGNORECASE):
                     for logical_disk in self.wmi.InstancesOf("Win32_LogicalDisk"):
                         if re.search("kindle", logical_disk.VolumeName, re.IGNORECASE):
-                            self.drive_letter = logical_disk.DeviceID
+                            self.mountPoint = logical_disk.DeviceID
                             self.description = logical_disk.Description
                             self.name = logical_disk.VolumeName
 
                             return True
         # Else assume a *nix environment
         else:
-            context = Context()
-            monitor = Monitor.from_netlink(context)
+            bus = dbus.SystemBus()
+            ud_manager_obj = bus.get_object("org.freedesktop.UDisks", "/org/freedesktop/UDisks")
+            ud_manager = dbus.Interface(ud_manager_obj, 'org.freedesktop.UDisks')
 
-            monitor.filter_by(subsystem="usb")
-            observer = MonitorObserver(monitor)
+            for dev in ud_manager.EnumerateDevices():
+                device_obj = bus.get_object("org.freedesktop.UDisks", dev)
+                device_props = dbus.Interface(device_obj, dbus.PROPERTIES_IFACE)
 
-            observer.connect("device-event", self._deviceEvent)
-            monitor.start()
+                if device_props.Get('org.freedesktop.UDisks.Device', "DriveVendor") == "Kindle":
+                    mountPaths = device_props.Get('org.freedesktop.UDisks.Device', "DeviceMountPaths")
+                    if len(mountPaths) > 0:
+                        self.vendor = device_props.Get('org.freedesktop.UDisks.Device', "DriveVendor")
+                        for point in mountPaths:
+                            self.mountPoint = point
+                        self.serial = device_props.Get('org.freedesktop.UDisks.Device', "DriveSerial")
+                        self.size = device_props.Get('org.freedesktop.UDisks.Device', "PartitionSize")
 
-            glib.MainLoop().run()
+            print(self.mountPoint)
 
         return False
+
+    def _listenOnUsb(self):
+        context = Context()
+        monitor = Monitor.from_netlink(context)
+
+        monitor.filter_by(subsystem="usb")
+        observer = MonitorObserver(monitor)
+        observer.connect("device-event", self._deviceEvent)
+        monitor.start()
+
+        glib.MainLoop().run()
 
     def _deviceEvent(observer, device, action = ""):
         if hasattr(device, "action"):
@@ -90,15 +112,15 @@ class Pydle:
     def printInfo(self):
         """ Print out some info about the device """
         try:
-            with open(self.drive_letter + "\\system\\version.txt") as fd:
+            with open(self.mountPoint + "\\system\\version.txt") as fd:
                 print("Version: " + fd.readline().strip())
             print("Device Name: " + self.name)
             print("Description: " + self.description)
-            print("Drive Letter: " + self.drive_letter)
+            print("Mount Point: " + self.mountPoint)
         except (AttributeError):
             print("No device detected.")
 
 if __name__ == "__main__":
-    pydle = Pydle(platform)
+    pydle = Pydle(sys.platform)
     # pydle.printInfo()
 
